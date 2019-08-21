@@ -23,9 +23,9 @@ app.post('/', validate, (req, res) => {
 
     const promises = [];
 
+    const idField = url.match(regex)[1];
 
     for (let record of payload) {
-        const idField = url.match(regex)[1];
         const idValue = record[idField];
 
         const urlWithParams = url.replace(`{${idField}}`, idValue);
@@ -34,19 +34,39 @@ app.post('/', validate, (req, res) => {
             json: true,
             method: verb.toUpperCase(),
             uri: urlWithParams,
-            body: record
+            body: record, resolveWithFullResponse: true
+
         };
 
-        rp(options).then(body => {
-            responseBody.results.push({...body, [idField]: idValue});
-
-            console.log(responseBody);
-        });
+        promises.push(rp(options).catch(error => {
+            return new Promise(resolve => resolve(error))
+        }));
     }
 
-    Promise.all()
+    Promise.all(promises).then(responses => {
+        for (let i=0 ; i < responses.length; i++) {
+            let { body, statusCode} = responses[i];
 
-    res.send(responseBody);
+            if (statusCode !== 200) {
+                responseBody.status = 503;
+                continue;
+            }
+
+            if (!body) {
+                continue;
+            }
+
+            let id = payload[i][idField];
+            responseBody.results.push({...body, [idField] : id});
+        }
+        res.send(responseBody);
+
+    }).catch(()=> {
+        res.status(500).send({
+            error: "bah"
+        })
+    });
+
 });
 
 app.listen(port, () => console.log(`Example app listening on port ${port}!`))
