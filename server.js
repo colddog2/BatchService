@@ -15,11 +15,11 @@ app.post('/', validate, (req, res) => {
     const {url, verb, payload} = req.body;
     const regex = /{(.*)}/; // capture the path param of delegated request
 
-    let promises = [];
-
+    let tasks = [];
     const idField = url.match(regex)[1];
 
-    for (let record of payload) {
+    payload.forEach((record, i) => {
+
         const idValue = record[idField];
 
         const urlWithParams = url.replace(`{${idField}}`, idValue);
@@ -32,13 +32,15 @@ app.post('/', validate, (req, res) => {
 
         };
 
-        //request throws error if requests fails (503), to avoid failing all requests if one fails, catch the error and return it
-        promises.push(rp(options)
+        const bucket = Math.floor(i/5);
+        tasks[bucket] = tasks[bucket] || [];
+        tasks[bucket].push(() => rp(options)
             .catch(() => rp(options))
             .catch(() => Promise.resolve({
                 statusCode: 503
-            })));
-    }
+            }))
+        );
+    });
 
     const result = {
         numSuccess: 0,
@@ -47,27 +49,32 @@ app.post('/', validate, (req, res) => {
         results: []
     };
 
-    Promise.all(promises)
-        .then( responses => {
-            responses.forEach( (response, i) => {
-                let {body, statusCode} = response;
-                let id = payload[i][idField];
 
-                if (statusCode !== 200) {
-                    result.status = statusCode;
-                    result.failed.push(id);
-                    return;
-                }
+    let updateResult = (offset, responses) => {
+        responses.forEach((response, i) => {
+            let {body, statusCode} = response;
+            let id = payload[i + offset*5][idField];
 
-                if (!body) {
-                    return;
-                }
+            if (statusCode !== 200) {
+                result.status = statusCode;
+                result.failed.push(id);
+                return;
+            }
 
-                result.numSuccess++;
-                result.results.push({...body, [idField]: id});
-            });
-        })
-        .then(() => res.send(result));
+            if (!body) {
+                return;
+            }
+
+            result.numSuccess++;
+            result.results.push({...body, [idField]: id});
+        });
+    };
+
+    tasks.reduce((a, c, index) => {
+        return a
+            .then(() => Promise.all(c.map(f => f())))
+            .then(updateResult.bind(null, index));
+    }, Promise.resolve()).then(() => res.send(result));
 });
 
 app.listen(port, () => console.log(`Example app listening on port ${port}!`))
