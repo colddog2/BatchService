@@ -37,8 +37,8 @@ app.post('/', validate, (req, res) => {
         tasks[bucket] = tasks[bucket] || [];
         tasks[bucket].push(() => rp(options)
             .catch(() => rp(options))
-            .catch(() => Promise.resolve({
-                statusCode: 503
+            .catch(({ statusCode }) => Promise.resolve({
+                statusCode
             }))
         );
     });
@@ -76,17 +76,22 @@ app.post('/', validate, (req, res) => {
     // promisify a sleep mechanism
     const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-    // run the tasks in sequence, i.e. perform the next task only when the prev completed
-    tasks.reduce((a, c, index) => {
+    const makeAllReq = task => Promise.all(task.map(makeReq => makeReq()));
 
-        // delay execution of next task
+    // run the tasks in sequence, i.e. perform the next task only when the prev completed
+    let promise = Promise.resolve();
+    for (const [index, task] of tasks.entries()) {
         if (index < tasks.length - 1) {
-            c.push(() => delay(0));
+            task.push(() => delay(500));
         }
-        return a
-            .then(() => Promise.all(c.map(f => f())))
+
+        promise = promise
+            .then(() => makeAllReq(task))
             .then(updateResult.bind(null, index))
-    }, Promise.resolve()).then(() => res.send(result));
+    }
+
+    promise.then(() => res.send(result));
+
 });
 
 app.listen(port, () => console.log(`Example app listening on port ${port}!`))
