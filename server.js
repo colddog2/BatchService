@@ -1,4 +1,4 @@
-"use strict"
+"use strict";
 const express = require('express');
 const app = express();
 const port = 3000;
@@ -17,7 +17,7 @@ app.post('/', validate, (req, res) => {
 
     let tasks = [];
     const idField = url.match(regex)[1];
-
+    const reqPerTasks = 5;
     payload.forEach((record, i) => {
 
         const idValue = record[idField];
@@ -32,7 +32,8 @@ app.post('/', validate, (req, res) => {
 
         };
 
-        const bucket = Math.floor(i/5);
+        // create a tasks list, each task is an array of http requests
+        const bucket = Math.floor(i/reqPerTasks);
         tasks[bucket] = tasks[bucket] || [];
         tasks[bucket].push(() => rp(options)
             .catch(() => rp(options))
@@ -49,11 +50,14 @@ app.post('/', validate, (req, res) => {
         results: []
     };
 
-
     let updateResult = (offset, responses) => {
         responses.forEach((response, i) => {
+            if (!response) {
+                return;
+            }
+
             let {body, statusCode} = response;
-            let id = payload[i + offset*5][idField];
+            let id = payload[i + offset*reqPerTasks][idField];
 
             if (statusCode !== 200) {
                 result.status = statusCode;
@@ -69,11 +73,19 @@ app.post('/', validate, (req, res) => {
             result.results.push({...body, [idField]: id});
         });
     };
+    // promisify a sleep mechanism
+    const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
+    // run the tasks in sequence, i.e. perform the next task only when the prev completed
     tasks.reduce((a, c, index) => {
+
+        // delay execution of next task
+        if (index < tasks.length - 1) {
+            c.push(() => delay(0));
+        }
         return a
             .then(() => Promise.all(c.map(f => f())))
-            .then(updateResult.bind(null, index));
+            .then(updateResult.bind(null, index))
     }, Promise.resolve()).then(() => res.send(result));
 });
 
